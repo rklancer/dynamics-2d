@@ -3,10 +3,10 @@
 
 var model = exports.model = {},
 
-    arrays       = require('../arrays/arrays'),
-    math         = require('../math/math'),
-    coulomb      = require('../potentials/coulomb'),
-    lennardJones = require('../potentials/lennardJones'),
+    arrays       = require('./arrays/arrays'),
+    math         = require('./math/math'),
+    coulomb      = require('./potentials/coulomb'),
+    lennardJones = require('./potentials/lennard-jones'),
 
     makeIntegrator,
     setup_ljf_limits,
