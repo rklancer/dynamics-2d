@@ -33,7 +33,7 @@ var model = exports.model = {},
     minCoulombForce = 0.01,
     cutoffDistance_Coulomb,
 
-    size,
+    size = [100, 100],
 
     //
     // Individual property arrays for the nodes
@@ -82,6 +82,10 @@ model.INDICES = {
   AY       : AY_INDEX,
   HALFMASS : HALFMASS_INDEX,
   CHARGE   : CHARGE_INDEX
+};
+
+model.setSize = function(x) {
+  size = x;
 };
 
 //
