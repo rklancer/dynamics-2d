@@ -1,11 +1,33 @@
 /*globals window, Float32Array */
 /*jslint devel: true eqnull: true */
 
-var arrays, math, model, hasTypedArrays, notSafari, makeIntegrator, lennardJones, coulomb,
+var model = exports.model = {},
+
+    arrays       = require('../arrays/arrays'),
+    math         = require('../math/math'),
+    coulomb      = require('../potentials/coulomb'),
+    lennardJones = require('../potentials/lennardJones'),
+
+    makeIntegrator,
+    abstractToRealTemperature,
+    setup_ljf_limits,
+    setup_coulomb_limits,
+
+    // TODO: Actually check for Safari. Typed arrays are faster almost everywhere
+    // ... except Safari.
+    notSafari = true,
+
+    hasTypedArrays = (function() {
+      try {
+        new Float32Array();
+      }
+      catch(e) {
+        return false;
+      }
+      return true;
+    }()),
 
     // revisit these for export:
-    molNumber, atoms, ab, nodePropertiesCount,
-
     minLJAttraction = 0.001,
     cutoffDistance_LJ,
 
@@ -27,7 +49,7 @@ var arrays, math, model, hasTypedArrays, notSafari, makeIntegrator, lennardJones
     //
     // A two dimensional array consisting of arrays of node property values
     //
-    nodes = arrays.create(nodePropertiesCount, null, "regular"),
+    nodes,
 
     //
     // Indexes into the nodes array for the individual node property arrays
@@ -48,27 +70,34 @@ var arrays, math, model, hasTypedArrays, notSafari, makeIntegrator, lennardJones
     HALFMASS_INDEX = 10,
     CHARGE_INDEX   = 11;
 
-
-exports.model = model = {};
-
-arrays       = require('../arrays/arrays');
-math         = require('../math/math');
-coulomb      = require('../potentials/coulomb');
-lennardJones = require('../potentials/lennardJones');
-
+model.INDICES = {
+  RADIUS   : RADIUS_INDEX,
+  PX       : PX_INDEX,
+  PY       : PY_INDEX,
+  X        : X_INDEX,
+  Y        : Y_INDEX,
+  VX       : VX_INDEX,
+  VY       : VY_INDEX,
+  SPEED    : SPEED_INDEX,
+  AX       : AX_INDEX,
+  AY       : AY_INDEX,
+  HALFMASS : HALFMASS_INDEX,
+  CHARGE   : CHARGE_INDEX
+};
 
 //
 // The abstractToRealTemperature(t) function is used to map temperatures in abstract units
 // within a range of 0..10 to the 'real' temperature <mv^2>/2k (remember there's only 2 DOF)
 //
-function abstractToRealTemperature(t) {
+// TODO: get rid of this. Only the lab repo should have this.
+abstractToRealTemperature = function(t) {
   return 0.19*t + 0.1;  // Translate 0..10 to 0.1..2
-}
+};
 
 //
 // Calculate the minimum and maximum distances for applying Lennard-Jones forces
 //
-function setup_ljf_limits() {
+setup_ljf_limits = function() {
   var i, f,
       maxLJRepulsion = -200.0,
       min_ljf_distance;
@@ -95,12 +124,12 @@ function setup_ljf_limits() {
       break;
     }
   }
-}
+};
 
 //
 // Calculate the minimum and maximum distances for applying Coulomb forces
 //
-function setup_coulomb_limits() {
+setup_coulomb_limits = function() {
   var i, f,
       maxCoulombForce = 20.0,
       min_coulomb_distance;
@@ -120,44 +149,13 @@ function setup_coulomb_limits() {
     }
   }
   cutoffDistance_Coulomb = i;
-}
-
-model.INDICES = {
-  RADIUS   : RADIUS_INDEX,
-  PX       : PX_INDEX,
-  PY       : PY_INDEX,
-  X        : X_INDEX,
-  Y        : Y_INDEX,
-  VX       : VX_INDEX,
-  VY       : VY_INDEX,
-  SPEED    : SPEED_INDEX,
-  AX       : AX_INDEX,
-  AY       : AY_INDEX,
-  HALFMASS : HALFMASS_INDEX,
-  CHARGE   : CHARGE_INDEX
 };
-
-
-// TODO: Actually check for Safari. Typed arrays are faster almost everywhere
-// ... except Safari.
-notSafari = true;
-
-hasTypedArrays = (function() {
-  try {
-    new Float32Array();
-  }
-  catch(e) {
-    return false;
-  }
-  return true;
-}());
-
 
 model.nodes = function(options) {
   options = options || {};
 
   var num                    = options.num                    || 50,
-      temperature            = options.temperature            || 3,
+      temperature            = options.temperature            || 1,
       rmin                   = options.rmin                   || 4.4,
       mol_rmin_radius_factor = options.mol_rmin_radius_factor || 0.38,
 
@@ -171,9 +169,6 @@ model.nodes = function(options) {
   nrows = Math.floor(Math.sqrt(num));
   ncols = nrows;
   num   = nrows * ncols;
-
-  molNumber = num;
-  atoms.length = num;
 
   model.nodes = nodes = arrays.create(nodePropertiesCount, null, 'regular');
 
@@ -226,7 +221,7 @@ model.nodes = function(options) {
   model.charge = charge = nodes[model.INDICES.CHARGE];
 
   // Actually arrange the atoms.
-  v0 = Math.sqrt(2*abstractToRealTemperature(temperature));
+  v0 = Math.sqrt(2*temperature);
 
   colSpacing = size[0] / (1+ncols);
   rowSpacing = size[1] / (1+nrows);
@@ -240,7 +235,7 @@ model.nodes = function(options) {
   for (r = 1; r <= nrows; r++) {
     for (c = 1; c <= ncols; c++) {
       i++;
-      if (i === molNumber) break;
+      if (i === num) break;
 
       x[i] = c*colSpacing;
       y[i] = r*rowSpacing;
@@ -273,8 +268,8 @@ model.nodes = function(options) {
     }
   }
 
-  v_CM_initial[0] /= molNumber;
-  v_CM_initial[1] /= molNumber;
+  v_CM_initial[0] /= num;
+  v_CM_initial[1] /= num;
 
   console.log("initial v_CM: [%f, %f]", v_CM_initial[0], v_CM_initial[1]);
 
@@ -697,7 +692,7 @@ model.getIntegrator = function(options, integratorOutputState) {
       useLennardJonesInteraction : lennard_jones_forces,
       useCoulombInteraction      : coulomb_forces,
       useThermostat              : temperature_control,
-      targetTemperature          : abstractToRealTemperature(temperature)
+      targetTemperature          : temperature
     },
 
     readWriteState: {
