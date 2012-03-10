@@ -1,16 +1,288 @@
-/*globals window, d3, molecules_coulomb, molecules_lennard_jones, benchmark */
+/*globals window, Float32Array */
 /*jslint devel: true eqnull: true */
 
-var arrays, math, modeler;
+var arrays, math, model, hasTypedArrays, notSafari, makeIntegrator, lennardJones, coulomb,
 
-arrays = require('../arrays/arrays');
-math   = require('../math/math');
+    // revisit these for export:
+    molNumber, atoms, nodes, nodePropertiesCount, integratorOutputState,
 
-exports.modeler = modeler = {};
+    minLJAttraction = 0.001,
+    cutoffDistance_LJ,
 
-modeler.VERSION = '0.1.0';
+    minCoulombForce = 0.01,
+    cutoffDistance_Coulomb,
 
-modeler.makeIntegrator = function(args) {
+    size,
+
+    //
+    // Individual property arrays for the nodes
+    //
+    radius, px, py, x, y, vx, vy, speed, ax, ay, halfmass, charge,
+
+    //
+    // Number of individual properties for a node
+    //
+    nodePropertiesCount = 12,
+
+    //
+    // A two dimensional array consisting of arrays of node property values
+    //
+    nodes = arrays.create(nodePropertiesCount, null, "regular"),
+
+    //
+    // Indexes into the nodes array for the individual node property arrays
+    //
+    // Access to these within this module will be faster if they are vars in this closure rather than property lookups.
+    // However, publish the indices to model.INDICES for use outside this module.
+    //
+    RADIUS_INDEX   =  0,
+    PX_INDEX       =  1,
+    PY_INDEX       =  2,
+    X_INDEX        =  3,
+    Y_INDEX        =  4,
+    VX_INDEX       =  5,
+    VY_INDEX       =  6,
+    SPEED_INDEX    =  7,
+    AX_INDEX       =  8,
+    AY_INDEX       =  9,
+    HALFMASS_INDEX = 10,
+    CHARGE_INDEX   = 11;
+
+
+exports.model = model = {};
+
+arrays       = require('../arrays/arrays');
+math         = require('../math/math');
+coulomb      = require('../potentials/coulomb');
+lennardJones = require('../potentials/lennardJones');
+
+
+//
+// The abstractToRealTemperature(t) function is used to map temperatures in abstract units
+// within a range of 0..10 to the 'real' temperature <mv^2>/2k (remember there's only 2 DOF)
+//
+function abstractToRealTemperature(t) {
+  return 0.19*t + 0.1;  // Translate 0..10 to 0.1..2
+}
+
+//
+// Calculate the minimum and maximum distances for applying Lennard-Jones forces
+//
+function setup_ljf_limits() {
+  var i, f,
+      maxLJRepulsion = -200.0,
+      min_ljf_distance;
+
+  for (i = 0; i <= 100; i+=0.001) {
+    f = lennardJones.force(i);
+    if (f > maxLJRepulsion) {
+      min_ljf_distance = i;
+      break;
+    }
+  }
+
+  for (;i <= 100; i+=0.001) {
+    f = lennardJones.force(i);
+    if (f > minLJAttraction) {
+      break;
+    }
+  }
+
+  for (;i <= 100; i+=0.001) {
+    f = lennardJones.force(i);
+    if (f < minLJAttraction) {
+      cutoffDistance_LJ = i;
+      break;
+    }
+  }
+}
+
+//
+// Calculate the minimum and maximum distances for applying Coulomb forces
+//
+function setup_coulomb_limits() {
+  var i, f,
+      maxCoulombForce = 20.0,
+      min_coulomb_distance;
+
+  for (i = 0.001; i <= 100; i+=0.001) {
+    f = coulomb.force(i, -1, 1);
+    if (f < maxCoulombForce) {
+      min_coulomb_distance = i;
+      break;
+    }
+  }
+
+  for (;i <= 100; i+=0.001) {
+    f = coulomb.force(i, -1, 1);
+    if (f < minCoulombForce) {
+      break;
+    }
+  }
+  cutoffDistance_Coulomb = i;
+}
+
+model.INDICES = {
+  RADIUS   : RADIUS_INDEX,
+  PX       : PX_INDEX,
+  PY       : PY_INDEX,
+  X        : X_INDEX,
+  Y        : Y_INDEX,
+  VX       : VX_INDEX,
+  VY       : VY_INDEX,
+  SPEED    : SPEED_INDEX,
+  AX       : AX_INDEX,
+  AY       : AY_INDEX,
+  HALFMASS : HALFMASS_INDEX,
+  CHARGE   : CHARGE_INDEX
+};
+
+
+// TODO: Actually check for Safari. Typed arrays are faster almost everywhere
+// ... except Safari.
+notSafari = true;
+
+hasTypedArrays = (function() {
+  try {
+    new Float32Array();
+  }
+  catch(e) {
+    return false;
+  }
+  return true;
+}());
+
+
+model.nodes = function(options) {
+  options = options || {};
+
+  var num                    = options.num                    || 50,
+      temperature            = options.temperature            || 3,
+      rmin                   = options.rmin                   || 4.4,
+      mol_rmin_radius_factor = options.mol_rmin_radius_factor || 0.38,
+
+      // special-case:
+      arrayType = (hasTypedArrays && notSafari) ? 'Float32Array' : 'regular',
+
+      v0,
+      i, r, c, nrows, ncols, rowSpacing, colSpacing,
+      vMagnitude, vDirection, v_CM_initial;
+
+  nrows = Math.floor(Math.sqrt(num));
+  ncols = nrows;
+  num   = nrows * ncols;
+
+  molNumber = num;
+  atoms.length = num;
+
+  nodes = arrays.create(nodePropertiesCount, null, 'regular');
+
+  // model.INDICES.RADIUS = 0
+  nodes[model.INDICES.RADIUS] = arrays.create(num, rmin * mol_rmin_radius_factor, arrayType );
+  radius = nodes[model.INDICES.RADIUS];
+
+  // model.INDICES.PX     = 1;
+  nodes[model.INDICES.PX] = arrays.create(num, 0, arrayType);
+  px = nodes[model.INDICES.PX];
+
+  // model.INDICES.PY     = 2;
+  nodes[model.INDICES.PY] = arrays.create(num, 0, arrayType);
+  py = nodes[model.INDICES.PY];
+
+  // model.INDICES.X      = 3;
+  nodes[model.INDICES.X] = arrays.create(num, 0, arrayType);
+  x = nodes[model.INDICES.X];
+
+  // model.INDICES.Y      = 4;
+  nodes[model.INDICES.Y] = arrays.create(num, 0, arrayType);
+  y = nodes[model.INDICES.Y];
+
+  // model.INDICES.VX     = 5;
+  nodes[model.INDICES.VX] = arrays.create(num, 0, arrayType);
+  vx = nodes[model.INDICES.VX];
+
+  // model.INDICES.VY     = 6;
+  nodes[model.INDICES.VY] = arrays.create(num, 0, arrayType);
+  vy = nodes[model.INDICES.VY];
+
+  // model.INDICES.SPEED  = 7;
+  nodes[model.INDICES.SPEED] = arrays.create(num, 0, arrayType);
+  speed = nodes[model.INDICES.SPEED];
+
+  // model.INDICES.AX     = 8;
+  nodes[model.INDICES.AX] = arrays.create(num, 0, arrayType);
+  ax = nodes[model.INDICES.AX];
+
+  // model.INDICES.AY     = 9;
+  nodes[model.INDICES.AY] = arrays.create(num, 0, arrayType);
+  ay = nodes[model.INDICES.AY];
+
+  // model.INDICES.HALFMASS = 10;
+  nodes[model.INDICES.HALFMASS] = arrays.create(num, 0.5, arrayType);
+  halfmass = nodes[model.INDICES.HALFMASS];
+
+  // model.INDICES.CHARGE   = 11;
+  nodes[model.INDICES.CHARGE] = arrays.create(num, 0, arrayType);
+  charge = nodes[model.INDICES.CHARGE];
+
+  // Actually arrange the atoms.
+  v0 = Math.sqrt(2*abstractToRealTemperature(temperature));
+
+  colSpacing = size[0] / (1+ncols);
+  rowSpacing = size[1] / (1+nrows);
+
+  // Arrange molecules in a lattice. Not guaranteed to have CM exactly on center, and is an artificially low-energy
+  // configuration. But it works OK for now.
+  i = -1;
+
+  v_CM_initial = [0, 0];
+
+  for (r = 1; r <= nrows; r++) {
+    for (c = 1; c <= ncols; c++) {
+      i++;
+      if (i === molNumber) break;
+
+      x[i] = c*colSpacing;
+      y[i] = r*rowSpacing;
+
+      // Randomize velocities, exactly balancing the motion of the center of mass by making the second half of the
+      // set of atoms have the opposite velocities of the first half. (If the atom number is odd, the "odd atom out"
+      // should have 0 velocity).
+      //
+      // Note that although the instantaneous temperature will be 'temperature' exactly, the temperature will quickly
+      // settle to a lower value because we are initializing the atoms spaced far apart, in an artificially low-energy
+      // configuration.
+
+      if (i < Math.floor(num/2)) {      // 'middle' atom will have 0 velocity
+        vMagnitude = math.normal(v0, v0/4);
+        vDirection = 2 * Math.random() * Math.PI;
+        vx[i] = vMagnitude * Math.cos(vDirection);
+        vy[i] = vMagnitude * Math.sin(vDirection);
+        vx[num-i-1] = -vx[i];
+        vy[num-i-1] = -vy[i];
+      }
+
+      v_CM_initial[0] += vx[i];
+      v_CM_initial[1] += vy[i];
+
+      ax[i] = 0;
+      ay[i] = 0;
+
+      speed[i]  = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+      charge[i] = 2*(i%2)-1;      // alternate negative and positive charges
+    }
+  }
+
+  v_CM_initial[0] /= molNumber;
+  v_CM_initial[1] /= molNumber;
+
+  console.log("initial v_CM: [%f, %f]", v_CM_initial[0], v_CM_initial[1]);
+
+  return model;
+};
+
+
+makeIntegrator = function(args) {
 
   var time           = 0,
       setOnceState   = args.setOnceState,
@@ -19,8 +291,8 @@ modeler.makeIntegrator = function(args) {
 
       outputState    = args.outputState,
 
-      max_coulomb_distance = setOnceState.max_coulomb_distance,
-      max_ljf_distance     = setOnceState.max_ljf_distance,
+      cutoffDistance_Coulomb = setOnceState.cutoffDistance_Coulomb,
+      cutoffDistance_LJ     = setOnceState.cutoffDistance_LJ,
       size                 = setOnceState.size,
 
       ax                   = readWriteState.ax,
@@ -321,11 +593,11 @@ modeler.makeIntegrator = function(args) {
               f_lj = 0;
               f_coul = 0;
 
-              if (useLennardJonesInteraction && r < max_ljf_distance) {
-                f_lj = molecules_lennard_jones.force(r);
+              if (useLennardJonesInteraction && r < cutoffDistance_LJ) {
+                f_lj = lennardJones.force(r);
               }
-              if (useCoulombInteraction && r < max_coulomb_distance) {
-                f_coul = molecules_coulomb.force(r, charge[i], charge[j]);
+              if (useCoulombInteraction && r < cutoffDistance_Coulomb) {
+                f_coul = coulomb.force(r, charge[i], charge[j]);
               }
 
               f  = f_lj + f_coul;
@@ -361,11 +633,11 @@ modeler.makeIntegrator = function(args) {
           r_sq = dx*dx + dy*dy;
           r = Math.sqrt(r_sq);
 
-          if (useLennardJonesInteraction && r < max_ljf_distance) {
-            PE += molecules_lennard_jones.potential(r);
+          if (useLennardJonesInteraction && r < cutoffDistance_LJ) {
+            PE += lennardJones.potential(r);
           }
-          if (useCoulombInteraction && r < max_coulomb_distance) {
-            PE += molecules_coulomb.potential(r, charge[i], charge[j]);
+          if (useCoulombInteraction && r < cutoffDistance_Coulomb) {
+            PE += coulomb.potential(r, charge[i], charge[j]);
           }
         }
       }
@@ -393,650 +665,54 @@ modeler.makeIntegrator = function(args) {
 };
 
 
-modeler.model = function() {
-  var model = {},
-      atoms = [],
-      mol_number,
-      event = d3.dispatch("tick"),
-      size = [100, 100],
-      temperature_control,
-      lennard_jones_forces, coulomb_forces,
-      pe,
-      ke,
-      stopped = true,
-      tick_history_list = [],
-      tick_history_list_index = 0,
-      tick_counter = 0,
-      new_step = false,
-      epsilon, sigma,
-      max_ljf_repulsion = -200.0,
-      min_ljf_attraction = 0.001,
-      max_ljf_distance,
-      min_ljf_distance,
-      max_coulomb_force = 20.0,
-      min_coulomb_force = 0.01,
-      max_coulomb_distance,
-      min_coulomb_distance,
-      pressure, pressures = [0],
-      sample_time, sample_times = [],
-      temperature,
-
-      integrator,
-      integratorOutputState = {},
-      model_listener,
-
-      //
-      // Individual property arrays for the nodes
-      //
-      radius, px, py, x, y, vx, vy, speed, ax, ay, halfmass, charge,
-
-      //
-      // Number of individual properties for a node
-      //
-      node_properties_length = 12,
-
-      //
-      // A two dimensional array consisting of arrays of node property values
-      //
-      nodes = arrays.create(node_properties_length, null, "regular"),
-
-      //
-      // Indexes into the nodes array for the individual node property arrays
-      //
-      // Access to these within this module will be faster if they are vars in this closure rather than property lookups.
-      // However, publish the indices to model.INDICES for use outside this module.
-      //
-      RADIUS_INDEX   =  0,
-      PX_INDEX       =  1,
-      PY_INDEX       =  2,
-      X_INDEX        =  3,
-      Y_INDEX        =  4,
-      VX_INDEX       =  5,
-      VY_INDEX       =  6,
-      SPEED_INDEX    =  7,
-      AX_INDEX       =  8,
-      AY_INDEX       =  9,
-      HALFMASS_INDEX = 10,
-      CHARGE_INDEX   = 11;
-
-
-  model.INDICES = {
-    RADIUS   : RADIUS_INDEX,
-    PX       : PX_INDEX,
-    PY       : PY_INDEX,
-    X        : X_INDEX,
-    Y        : Y_INDEX,
-    VX       : VX_INDEX,
-    VY       : VY_INDEX,
-    SPEED    : SPEED_INDEX,
-    AX       : AX_INDEX,
-    AY       : AY_INDEX,
-    HALFMASS : HALFMASS_INDEX,
-    CHARGE   : CHARGE_INDEX
-  };
-
-
-  //
-  // The abstract_to_real_temperature(t) function is used to map temperatures in abstract units
-  // within a range of 0..10 to the 'real' temperature <mv^2>/2k (remember there's only 2 DOF)
-  //
-  function abstract_to_real_temperature(t) {
-    return 0.19*t + 0.1;  // Translate 0..10 to 0.1..2
-  }
-
-  function average_speed() {
-    var i, s = 0, n = nodes[0].length;
-    i = -1; while (++i < n) { s += speed[i]; }
-    return s/n;
-  }
-
-  //
-  // Calculate the minimum and maximum distances for applying lennard-jones forces
-  //
-  function setup_ljf_limits() {
-    var i, f;
-    for (i = 0; i <= 100; i+=0.001) {
-      f = molecules_lennard_jones.force(i);
-      if (f > max_ljf_repulsion) {
-        min_ljf_distance = i;
-        break;
-      }
-    }
-
-    for (;i <= 100; i+=0.001) {
-      f = molecules_lennard_jones.force(i);
-      if (f > min_ljf_attraction) {
-        break;
-      }
-    }
-
-    for (;i <= 100; i+=0.001) {
-      f = molecules_lennard_jones.force(i);
-      if (f < min_ljf_attraction) {
-        max_ljf_distance = i;
-        break;
-      }
-    }
-  }
-
-  //
-  // Calculate the minimum and maximum distances for applying coulomb forces
-  //
-  function setup_coulomb_limits() {
-    var i, f;
-    for (i = 0.001; i <= 100; i+=0.001) {
-      f = molecules_coulomb.force(i, -1, 1);
-      if (f < max_coulomb_force) {
-        min_coulomb_distance = i;
-        break;
-      }
-    }
-
-    for (;i <= 100; i+=0.001) {
-      f = molecules_coulomb.force(i, -1, 1);
-      if (f < min_coulomb_force) {
-        break;
-      }
-    }
-    max_coulomb_distance = i;
-  }
-
-  function tick_history_list_push() {
-    var i,
-        newnodes = [],
-        n = nodes.length;
-
-    i = -1; while (++i < n) {
-      newnodes[i] = arrays.clone(nodes[i]);
-    }
-    tick_history_list.length = tick_history_list_index;
-    tick_history_list_index++;
-    tick_counter++;
-    new_step = true;
-    tick_history_list.push({ nodes: newnodes, ke:ke });
-    if (tick_history_list_index > 1000) {
-      tick_history_list.splice(0,1);
-      tick_history_list_index = 1000;
-    }
-  }
-
-  function tick() {
-    var t;
-
-    integrator.integrate();
-    pressure = integratorOutputState.pressure;
-    pe = integratorOutputState.PE;
-
-    pressures.push(pressure);
-    pressures.splice(0, pressures.length - 16); // limit the pressures array to the most recent 16 entries
-    ke = integratorOutputState.KE;
-    tick_history_list_push();
-    if (!stopped) {
-      t = Date.now();
-      if (sample_time) {
-        sample_time  = t - sample_time;
-        if (sample_time) { sample_times.push(sample_time); }
-        sample_time = t;
-        sample_times.splice(0, sample_times.length - 128);
-      } else {
-        sample_time = t;
-      }
-      event.tick({type: "tick"});
-    }
-    return stopped;
-  }
-
-  function reset_tick_history_list() {
-    tick_history_list = [];
-    tick_history_list_index = 0;
-    tick_counter = -1;
-  }
-
-  function tick_history_list_reset_to_ptr() {
-    tick_history_list.length = tick_history_list_index + 1;
-  }
-
-  function tick_history_list_extract(index) {
-    var i, n=nodes.length;
-    if (index < 0) {
-      throw new Error("modeler: request for tick_history_list[" + index + "]");
-    }
-    if (index >= tick_history_list.length) {
-      throw new Error("modeler: request for tick_history_list[" + index + "], tick_history_list.length=" + tick_history_list.length);
-    }
-    i = -1; while(++i < n) {
-      arrays.copy(tick_history_list[index].nodes[i], nodes[i]);
-    }
-    ke = tick_history_list[index].ke;
-  }
-
-  function container_pressure() {
-    return pressures.reduce(function(j,k) { return j+k; })/pressures.length;
-  }
-
-  function speed_history(speeds) {
-    if (arguments.length) {
-      speed_history.push(speeds);
-      // limit the pressures array to the most recent 16 entries
-      speed_history.splice(0, speed_history.length - 100);
-    } else {
-      return speed_history.reduce(function(j,k) { return j+k; })/pressures.length;
-    }
-  }
-
-  function average_rate() {
-    var i, ave, s = 0, n = sample_times.length;
-    i = -1; while (++i < n) { s += sample_times[i]; }
-    ave = s/n;
-    return (ave ? 1/ave*1000: 0);
-  }
-
-  function set_temperature(t) {
-    temperature = t;
-    if (integrator) integrator.setTargetTemperature(abstract_to_real_temperature(t));
-  }
-
-  // ------------------------------------------------------------
-  //
-  // Public functions
-  //
-  // ------------------------------------------------------------
-
-  model.getStats = function() {
-    return {
-      speed       : average_speed(),
-      ke          : ke,
-      temperature : temperature,
-      pressure    : container_pressure(),
-      current_step: tick_counter,
-      steps       : tick_history_list.length-1
-    };
-  };
-
-  model.stepCounter = function() {
-    return tick_counter;
-  };
-
-  model.steps = function() {
-    return tick_history_list.length-1;
-  };
-
-  model.isNewStep = function() {
-    return new_step;
-  };
-
-  model.seek = function(location) {
-    if (!arguments.length) { location = 0; }
-    stopped = true;
-    new_step = false;
-    tick_history_list_index = location;
-    tick_counter = location;
-    tick_history_list_extract(tick_history_list_index);
-    return tick_counter;
-  };
-
-  model.stepBack = function(num) {
-    if (!arguments.length) { num = 1; }
-    var i = -1;
-    stopped = true;
-    new_step = false;
-    while(++i < num) {
-      if (tick_history_list_index > 1) {
-        tick_history_list_index--;
-        tick_counter--;
-        tick_history_list_extract(tick_history_list_index-1);
-        if (model_listener) { model_listener(); }
-      }
-    }
-    return tick_counter;
-  };
-
-  model.stepForward = function(num) {
-    if (!arguments.length) { num = 1; }
-    var i = -1;
-    stopped = true;
-    while(++i < num) {
-      if (tick_history_list_index < tick_history_list.length) {
-        tick_history_list_extract(tick_history_list_index);
-        tick_history_list_index++;
-        tick_counter++;
-        if (model_listener) { model_listener(); }
-      } else {
-        tick();
-        if (model_listener) { model_listener(); }
-      }
-    }
-    return tick_counter;
-  };
-
-  // The next four functions assume we're are doing this for
-  // all the atoms will need to be changed when different atoms
-  // can have different LJ sigma values
-
-  model.set_lj_coefficients = function(e, s) {
-    // am not using the coefficients beyond setting the ljf limits yet ...
-    epsilon = e;
-    sigma = s;
-    molecules_lennard_jones.epsilon(e);
-    molecules_lennard_jones.sigma(s);
-    setup_ljf_limits();
-  };
-
-  model.getEpsilon = function() {
-    return epsilon;
-  };
-
-  model.getSigma = function() {
-    return sigma;
-  };
-
-  model.set_radius = function(r) {
-    var i, n = nodes[0].length;
-    i = -1; while(++i < n) { radius[i] = r; }
-  };
-
-  // return a copy of the array of speeds
-  model.get_speed = function() {
-    return arrays.copy(speed, []);
-  };
-
-  model.get_rate = function() {
-    return average_rate();
-  };
-
-  model.set_temperature_control = function(tc) {
-   temperature_control = tc;
-   if (integrator) integrator.useThermostat(tc);
-  };
-
-  model.set_lennard_jones_forces = function(lj) {
-   lennard_jones_forces = lj;
-   if (integrator) integrator.useLennardJonesInteraction(lj);
-  };
-
-  model.set_coulomb_forces = function(cf) {
-   coulomb_forces = cf;
-   if (integrator) integrator.useCoulombInteraction(cf);
-  };
-
-  model.get_nodes = function() {
-    return nodes;
-  };
-
-  model.get_atoms = function() {
-    return atoms;
-  };
-
-  model.initialize = function(options) {
-    options = options || {};
-    var temperature;
-
-    lennard_jones_forces = options.lennard_jones_forces || true;
-    coulomb_forces       = options.coulomb_forces       || false;
-    temperature_control  = options.temperature_control  || false;
-    temperature          = options.temperature          || 3;
-
-    // who is listening to model tick completions
-    model_listener = options.model_listener || false;
-
-    reset_tick_history_list();
-
-    // setup local variables that help optimize the calculation loops
-    // TODO pull this state out and pass it to the integrator
-    setup_ljf_limits();
-    setup_coulomb_limits();
-
-    // pressures.push(pressure);
-    // pressures.splice(0, pressures.length - 16); // limit the pressures array to the most recent 16 entries
-
-    integrator = modeler.makeIntegrator({
-
-      setOnceState: {
-        max_coulomb_distance : max_coulomb_distance,
-        max_ljf_distance     : max_ljf_distance,
-        size                 : size,
-        max_ljf_repulsion    : max_ljf_repulsion,
-        max_coulomb_force    : max_coulomb_force
-      },
-
-      settableState: {
-        useLennardJonesInteraction : lennard_jones_forces,
-        useCoulombInteraction      : coulomb_forces,
-        useThermostat              : temperature_control,
-        targetTemperature          : abstract_to_real_temperature(temperature)
-      },
-
-      readWriteState: {
-        ax     : ax,
-        ay     : ay,
-        charge : charge,
-        nodes  : nodes,
-        px     : px,
-        py     : py,
-        radius : radius,
-        speed  : speed,
-        vx     : vx,
-        vy     : vy,
-        x      : x,
-        y      : y
-      },
-
-      outputState: integratorOutputState
-    });
-
-    tick_history_list_push();
-    return model;
-  };
-
-  model.relax = function() {
-    // thermalize enough that relaxToTemperature doesn't need a ridiculous window size
-    //integrator.integrate(100, 1/20);
-    //integrator.relaxToTemperature();
-    return model;
-  };
-
-  model.on = function(type, listener) {
-    event.on(type, listener);
-    return model;
-  };
-
-  model.tickInPlace = function() {
-    event.tick({type: "tick"});
-    return model;
-  };
-
-  model.tick = function(num) {
-    if (!arguments.length) { num = 1; }
-    var i = -1;
-    while(++i < num) {
-      tick();
-    }
-    return model;
-  };
-
-  model.nodes = function(options) {
-    options = options || {};
-
-    var num                    = options.num                    || 50,
-        temperature            = options.temperature            || 3,
-        rmin                   = options.rmin                   || 4.4,
-        mol_rmin_radius_factor = options.mol_rmin_radius_factor || 0.38,
-
-        webgl      = !!window && !!window.WebGLRenderingContext,
-        not_safari = benchmark.what_browser.browser !== 'Safari',
-
-        // special-case: Typed arrays are faster almost everywhere
-        // ... except for Safari
-        array_type = (webgl && not_safari) ? 'Float32Array' : 'regular',
-
-        v0,
-        i, r, c, nrows, ncols, rowSpacing, colSpacing,
-        vMagnitude, vDirection, v_CM_initial;
-
-    nrows = Math.floor(Math.sqrt(num));
-    ncols = nrows;
-    num   = nrows * ncols;
-
-    mol_number   = num;
-    atoms.length = num;
-
-    nodes = arrays.create(node_properties_length, null, 'regular');
-
-    // model.INDICES.RADIUS = 0
-    nodes[model.INDICES.RADIUS] = arrays.create(num, rmin * mol_rmin_radius_factor, array_type );
-    radius = nodes[model.INDICES.RADIUS];
-
-    // model.INDICES.PX     = 1;
-    nodes[model.INDICES.PX] = arrays.create(num, 0, array_type);
-    px = nodes[model.INDICES.PX];
-
-    // model.INDICES.PY     = 2;
-    nodes[model.INDICES.PY] = arrays.create(num, 0, array_type);
-    py = nodes[model.INDICES.PY];
-
-    // model.INDICES.X      = 3;
-    nodes[model.INDICES.X] = arrays.create(num, 0, array_type);
-    x = nodes[model.INDICES.X];
-
-    // model.INDICES.Y      = 4;
-    nodes[model.INDICES.Y] = arrays.create(num, 0, array_type);
-    y = nodes[model.INDICES.Y];
-
-    // model.INDICES.VX     = 5;
-    nodes[model.INDICES.VX] = arrays.create(num, 0, array_type);
-    vx = nodes[model.INDICES.VX];
-
-    // model.INDICES.VY     = 6;
-    nodes[model.INDICES.VY] = arrays.create(num, 0, array_type);
-    vy = nodes[model.INDICES.VY];
-
-    // model.INDICES.SPEED  = 7;
-    nodes[model.INDICES.SPEED] = arrays.create(num, 0, array_type);
-    speed = nodes[model.INDICES.SPEED];
-
-    // model.INDICES.AX     = 8;
-    nodes[model.INDICES.AX] = arrays.create(num, 0, array_type);
-    ax = nodes[model.INDICES.AX];
-
-    // model.INDICES.AY     = 9;
-    nodes[model.INDICES.AY] = arrays.create(num, 0, array_type);
-    ay = nodes[model.INDICES.AY];
-
-    // model.INDICES.HALFMASS = 10;
-    nodes[model.INDICES.HALFMASS] = arrays.create(num, 0.5, array_type);
-    halfmass = nodes[model.INDICES.HALFMASS];
-
-    // model.INDICES.CHARGE   = 11;
-    nodes[model.INDICES.CHARGE] = arrays.create(num, 0, array_type);
-    charge = nodes[model.INDICES.CHARGE];
-
-    // Actually arrange the atoms.
-    v0 = Math.sqrt(2*abstract_to_real_temperature(temperature));
-
-    colSpacing = size[0] / (1+ncols);
-    rowSpacing = size[1] / (1+nrows);
-
-    // Arrange molecules in a lattice. Not guaranteed to have CM exactly on center, and is an artificially low-energy
-    // configuration. But it works OK for now.
-    i = -1;
-
-    v_CM_initial = [0, 0];
-
-    for (r = 1; r <= nrows; r++) {
-      for (c = 1; c <= ncols; c++) {
-        i++;
-        if (i === mol_number) break;
-
-        x[i] = c*colSpacing;
-        y[i] = r*rowSpacing;
-
-        // Randomize velocities, exactly balancing the motion of the center of mass by making the second half of the
-        // set of atoms have the opposite velocities of the first half. (If the atom number is odd, the "odd atom out"
-        // should have 0 velocity).
-        //
-        // Note that although the instantaneous temperature will be 'temperature' exactly, the temperature will quickly
-        // settle to a lower value because we are initializing the atoms spaced far apart, in an artificially low-energy
-        // configuration.
-
-        if (i < Math.floor(num/2)) {      // 'middle' atom will have 0 velocity
-          vMagnitude = modeler.math.normal(v0, v0/4);
-          vDirection = 2 * Math.random() * Math.PI;
-          vx[i] = vMagnitude * Math.cos(vDirection);
-          vy[i] = vMagnitude * Math.sin(vDirection);
-          vx[num-i-1] = -vx[i];
-          vy[num-i-1] = -vy[i];
-        }
-
-        v_CM_initial[0] += vx[i];
-        v_CM_initial[1] += vy[i];
-
-        ax[i] = 0;
-        ay[i] = 0;
-
-        speed[i]  = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
-        charge[i] = 2*(i%2)-1;      // alternate negative and positive charges
-      }
-    }
-
-    v_CM_initial[0] /= mol_number;
-    v_CM_initial[1] /= mol_number;
-
-    console.log("initial v_CM: [%f, %f]", v_CM_initial[0], v_CM_initial[1]);
-
-    return model;
-  };
-
-  model.start = function() {
-    model.initialize();
-    return model.resume();
-  };
-
-  model.resume = function() {
-    stopped = false;
-    d3.timer(tick);
-    return model;
-  };
-
-  model.stop = function() {
-    stopped = true;
-    return model;
-  };
-
-  model.ke = function() {
-    return integratorOutputState ? integratorOutputState.KE : undefined;
-  };
-
-  model.ave_ke = function() {
-    return integratorOutputState? integratorOutputState.KE / nodes[0].length : undefined;
-  };
-
-  model.pe = function() {
-    return integratorOutputState ? integratorOutputState.PE : undefined;
-  };
-
-  model.ave_pe = function() {
-    return integratorOutputState? integratorOutputState.PE / nodes[0].length : undefined;
-  };
-
-  model.speed = function() {
-    return average_speed();
-  };
-
-  model.pressure = function() {
-    return container_pressure();
-  };
-
-  model.temperature = function(x) {
-    if (!arguments.length) return temperature;
-    set_temperature(x);
-    return model;
-  };
-
-  model.size = function(x) {
-    if (!arguments.length) return size;
-    size = x;
-    return model;
-  };
-
-  return model;
+model.getIntegrator = function(options) {
+  options = options || {};
+  var lennard_jones_forces = options.lennard_jones_forces || true,
+      coulomb_forces       = options.coulomb_forces       || false,
+      temperature_control  = options.temperature_control  || false,
+      temperature          = options.temperature          || 3,
+      integrator;
+
+  // setup local variables that help optimize the calculation loops
+  // TODO pull this state out and pass it to the integrator
+  setup_ljf_limits();
+  setup_coulomb_limits();
+
+  // pressures.push(pressure);
+  // pressures.splice(0, pressures.length - 16); // limit the pressures array to the most recent 16 entries
+
+  integrator = makeIntegrator({
+
+    setOnceState: {
+      cutoffDistance_Coulomb: cutoffDistance_Coulomb,
+      cutoffDistance_LJ   : cutoffDistance_LJ,
+      size                : size
+    },
+
+    settableState: {
+      useLennardJonesInteraction : lennard_jones_forces,
+      useCoulombInteraction      : coulomb_forces,
+      useThermostat              : temperature_control,
+      targetTemperature          : abstractToRealTemperature(temperature)
+    },
+
+    readWriteState: {
+      ax     : ax,
+      ay     : ay,
+      charge : charge,
+      nodes  : nodes,
+      px     : px,
+      py     : py,
+      radius : radius,
+      speed  : speed,
+      vx     : vx,
+      vy     : vy,
+      x      : x,
+      y      : y
+    },
+
+    outputState: integratorOutputState
+  });
+
+  return integrator;
 };
