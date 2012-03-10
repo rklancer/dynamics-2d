@@ -10,7 +10,7 @@ var arrays;
 arrays = exports.arrays = {};
 
 arrays.version = '0.0.1';
-arrays.webgl = !!window.WebGLRenderingContext;
+arrays.webgl = (typeof window !== 'undefined') && !!window.WebGLRenderingContext;
 arrays.typed = false;
 try {
   var a = new Float64Array(0);
