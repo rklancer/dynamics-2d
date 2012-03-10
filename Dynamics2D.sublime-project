@@ -1,0 +1,37 @@
+{
+	"build_systems":
+	[
+		{
+			"cmd":
+			[
+				"$project_path/node_modules/.bin/jshint $file --config $project_path/jshint-config.json --show-non-errors"
+			],
+			"file_regex": "(.+js).+((?<=line\\s)\\d+).+((?<=col\\s)\\d+),\\s(.+$)",
+			"name": "JSHint",
+			"selector": "source.js",
+			"shell": true
+		}
+	],
+	"folders":
+	[
+		{
+			"folder_exclude_patterns":
+			[
+				"bin",
+				"browser",
+				"lib",
+				"nbin",
+				"node_modules",
+				"references",
+				"lib"
+			],
+			"path": "/Users/rklancer/dev/Dynamics2D"
+		}
+	],
+	"settings":
+	{
+		"tab_size": 2,
+		"translate_tabs_to_spaces": true,
+		"trim_trailing_white_space_on_save": true
+	}
+}
