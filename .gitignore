@@ -1,0 +1,6 @@
+./bin
+./browser
+./lib
+references
+*.sublime-workspace
+.DS_Store
