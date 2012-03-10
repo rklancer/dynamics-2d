@@ -3,10 +3,10 @@
 
 var model = exports.model = {},
 
-    arrays       = require('./arrays/arrays'),
-    math         = require('./math/math'),
-    coulomb      = require('./potentials/coulomb'),
-    lennardJones = require('./potentials/lennard-jones'),
+    arrays       = require('./arrays/arrays').arrays,
+    math         = require('./math/math').math,
+    coulomb      = require('./potentials/coulomb').coulomb,
+    lennardJones = require('./potentials/lennard-jones').lennardJones,
 
     makeIntegrator,
     setup_ljf_limits,
@@ -141,7 +141,7 @@ setup_coulomb_limits = function() {
   cutoffDistance_Coulomb = i;
 };
 
-model.nodes = function(options) {
+model.createNodes = function(options) {
   options = options || {};
 
   var num                    = options.num                    || 50,
@@ -262,8 +262,6 @@ model.nodes = function(options) {
   v_CM_initial[1] /= num;
 
   console.log("initial v_CM: [%f, %f]", v_CM_initial[0], v_CM_initial[1]);
-
-  return model;
 };
 
 
