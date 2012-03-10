@@ -9,7 +9,6 @@ var model = exports.model = {},
     lennardJones = require('../potentials/lennardJones'),
 
     makeIntegrator,
-    abstractToRealTemperature,
     setup_ljf_limits,
     setup_coulomb_limits,
 
@@ -83,15 +82,6 @@ model.INDICES = {
   AY       : AY_INDEX,
   HALFMASS : HALFMASS_INDEX,
   CHARGE   : CHARGE_INDEX
-};
-
-//
-// The abstractToRealTemperature(t) function is used to map temperatures in abstract units
-// within a range of 0..10 to the 'real' temperature <mv^2>/2k (remember there's only 2 DOF)
-//
-// TODO: get rid of this. Only the lab repo should have this.
-abstractToRealTemperature = function(t) {
-  return 0.19*t + 0.1;  // Translate 0..10 to 0.1..2
 };
 
 //
