@@ -8,6 +8,7 @@
   "debug": false,
   "devel": false,
   "eqeqeq": true,
+  "eqnull": true,
   "evil": true,
   "forin": true,
   "immed": true,
