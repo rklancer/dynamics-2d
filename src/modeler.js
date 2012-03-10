@@ -4,7 +4,7 @@
 var arrays, math, model, hasTypedArrays, notSafari, makeIntegrator, lennardJones, coulomb,
 
     // revisit these for export:
-    molNumber, atoms, nodes, nodePropertiesCount, integratorOutputState,
+    molNumber, atoms, ab, nodePropertiesCount,
 
     minLJAttraction = 0.001,
     cutoffDistance_LJ,
@@ -175,55 +175,55 @@ model.nodes = function(options) {
   molNumber = num;
   atoms.length = num;
 
-  nodes = arrays.create(nodePropertiesCount, null, 'regular');
+  model.nodes = nodes = arrays.create(nodePropertiesCount, null, 'regular');
 
   // model.INDICES.RADIUS = 0
   nodes[model.INDICES.RADIUS] = arrays.create(num, rmin * mol_rmin_radius_factor, arrayType );
-  radius = nodes[model.INDICES.RADIUS];
+  model.radius = radius = nodes[model.INDICES.RADIUS];
 
   // model.INDICES.PX     = 1;
   nodes[model.INDICES.PX] = arrays.create(num, 0, arrayType);
-  px = nodes[model.INDICES.PX];
+  model.px = px = nodes[model.INDICES.PX];
 
   // model.INDICES.PY     = 2;
   nodes[model.INDICES.PY] = arrays.create(num, 0, arrayType);
-  py = nodes[model.INDICES.PY];
+  model.py = py = nodes[model.INDICES.PY];
 
   // model.INDICES.X      = 3;
   nodes[model.INDICES.X] = arrays.create(num, 0, arrayType);
-  x = nodes[model.INDICES.X];
+  model.x = x = nodes[model.INDICES.X];
 
   // model.INDICES.Y      = 4;
   nodes[model.INDICES.Y] = arrays.create(num, 0, arrayType);
-  y = nodes[model.INDICES.Y];
+  model.y = y = nodes[model.INDICES.Y];
 
   // model.INDICES.VX     = 5;
   nodes[model.INDICES.VX] = arrays.create(num, 0, arrayType);
-  vx = nodes[model.INDICES.VX];
+  model.vx = vx = nodes[model.INDICES.VX];
 
   // model.INDICES.VY     = 6;
   nodes[model.INDICES.VY] = arrays.create(num, 0, arrayType);
-  vy = nodes[model.INDICES.VY];
+  model.vy = vy = nodes[model.INDICES.VY];
 
   // model.INDICES.SPEED  = 7;
   nodes[model.INDICES.SPEED] = arrays.create(num, 0, arrayType);
-  speed = nodes[model.INDICES.SPEED];
+  model.speed = speed = nodes[model.INDICES.SPEED];
 
   // model.INDICES.AX     = 8;
   nodes[model.INDICES.AX] = arrays.create(num, 0, arrayType);
-  ax = nodes[model.INDICES.AX];
+  model.ax = ax = nodes[model.INDICES.AX];
 
   // model.INDICES.AY     = 9;
   nodes[model.INDICES.AY] = arrays.create(num, 0, arrayType);
-  ay = nodes[model.INDICES.AY];
+  model.ay = ay = nodes[model.INDICES.AY];
 
   // model.INDICES.HALFMASS = 10;
   nodes[model.INDICES.HALFMASS] = arrays.create(num, 0.5, arrayType);
-  halfmass = nodes[model.INDICES.HALFMASS];
+  model.halfmass = halfmass = nodes[model.INDICES.HALFMASS];
 
   // model.INDICES.CHARGE   = 11;
   nodes[model.INDICES.CHARGE] = arrays.create(num, 0, arrayType);
-  charge = nodes[model.INDICES.CHARGE];
+  model.charge = charge = nodes[model.INDICES.CHARGE];
 
   // Actually arrange the atoms.
   v0 = Math.sqrt(2*abstractToRealTemperature(temperature));
@@ -289,11 +289,11 @@ makeIntegrator = function(args) {
       readWriteState = args.readWriteState,
       settableState  = args.settableState || {},
 
-      outputState    = args.outputState,
+      outputState    = {},
 
       cutoffDistance_Coulomb = setOnceState.cutoffDistance_Coulomb,
-      cutoffDistance_LJ     = setOnceState.cutoffDistance_LJ,
-      size                 = setOnceState.size,
+      cutoffDistance_LJ      = setOnceState.cutoffDistance_LJ,
+      size                   = setOnceState.size,
 
       ax                   = readWriteState.ax,
       ay                   = readWriteState.ay,
@@ -444,6 +444,10 @@ makeIntegrator = function(args) {
         this.integrate();
       }
       breakOnTargetTemperature = false;
+    },
+
+    getOutputState: function() {
+      return outputState;
     },
 
     integrate: function(duration, dt) {
@@ -665,7 +669,7 @@ makeIntegrator = function(args) {
 };
 
 
-model.getIntegrator = function(options) {
+model.getIntegrator = function(options, integratorOutputState) {
   options = options || {};
   var lennard_jones_forces = options.lennard_jones_forces || true,
       coulomb_forces       = options.coulomb_forces       || false,
