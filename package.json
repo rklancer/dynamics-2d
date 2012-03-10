@@ -1,0 +1,30 @@
+{
+  "name": "Dynamics2D",
+  "version": "0.0.1",
+  "files": [
+    "bin",
+    "browser", 
+    "lib"
+  ],
+  "engines": {
+    "node": "0.6.0"
+  },
+  "dependencies": {
+  },
+  "devDependencies": {
+    "browserify": "~1.10",
+    "coffee-script": "~1.2",
+    "commander": "~0.5",
+    "jake": "~0.2",
+    "jasmine-node": "~1.0",
+    "jshint": "~0.5"
+  },
+  "optionalDependencies": {
+  },
+  "author": "Richard Klancer <rpk@pobox.com>",
+  "description": "Just the two-dimensional molecular dynamics engine from Concord Consortium's Next Generation Modeling Workbench project",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/rklancer/Dynamics2D.git#dist"
+  }
+}
