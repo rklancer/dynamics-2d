@@ -1,5 +1,5 @@
-/*globals window, Float32Array */
-/*jslint devel: true eqnull: true */
+/*globals Float32Array */
+/*jslint devel: true */
 
 var model = exports.model = {},
 
