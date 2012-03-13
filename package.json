@@ -2,9 +2,9 @@
   "name": "dynamics-2d",
   "version": "0.0.1",
   "files": [
-    "dist/bin",
-    "dist/browser",
-    "dist/lib"
+    { "bin": "dist/bin" },
+    { "browser": "dist/browser" },
+    { "lib": "dist/lib" },
   ],
   "engines": {
     "node": ">0.4.0"
