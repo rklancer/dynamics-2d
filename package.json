@@ -22,7 +22,7 @@
     "bin": "dist/bin",
     "browser": "dist/browser",
     "lib": "dist/lib"
-  }
+  },
   "optionalDependencies": {},
   "author": "Richard Klancer <rpk@pobox.com>",
   "description": "Just the two-dimensional molecular dynamics engine from Concord Consortium's Next Generation Modeling Workbench project",
