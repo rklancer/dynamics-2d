@@ -450,7 +450,7 @@ makeIntegrator = function(args) {
           j,
           r,
           dr_sq, v_sq, r_sq,
-          f, f_lj, f_coul, fx, fy,        // pairwise forces and their x, y components
+          f, fx, fy,        // pairwise forces and their x, y components
           dx, dy,
           x_initial, y_initial,
           iloop,
@@ -581,24 +581,26 @@ makeIntegrator = function(args) {
               r_sq = dx*dx + dy*dy;
               r = Math.sqrt(r_sq);
 
-              f_lj = 0;
-              f_coul = 0;
-
               if (useLennardJonesInteraction && r < cutoffDistance_LJ) {
-                f_lj = lennardJones.force(r);
+                f = lennardJones.force(r);
+                fx = f * (dx / r);
+                fy = f * (dy / r);
+
+                ax[i] += fx;
+                ay[i] += fy;
+                ax[j] -= fx;
+                ay[j] -= fy;
               }
               if (useCoulombInteraction && r < cutoffDistance_Coulomb) {
-                f_coul = coulomb.force(r, charge[i], charge[j]);
+                f = coulomb.force(r, charge[i], charge[j]);
+                fx = f * (dx / r);
+                fy = f * (dy / r);
+
+                ax[i] += fx;
+                ay[i] += fy;
+                ax[j] -= fx;
+                ay[j] -= fy;
               }
-
-              f  = f_lj + f_coul;
-              fx = f * (dx / r);
-              fy = f * (dy / r);
-
-              ax[i] += fx;
-              ay[i] += fy;
-              ax[j] -= fx;
-              ay[j] -= fy;
             }
           }
         }
