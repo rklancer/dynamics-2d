@@ -1,6 +1,6 @@
 {
   "name": "dynamics-2d",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "files": [
     "bin",
     "browser",
