@@ -1,9 +1,9 @@
 {
-  "name": "Dynamics2D",
+  "name": "dynamics-2d",
   "version": "0.0.1",
   "files": [
     "bin",
-    "browser", 
+    "browser",
     "lib"
   ],
   "engines": {
@@ -25,6 +25,6 @@
   "description": "Just the two-dimensional molecular dynamics engine from Concord Consortium's Next Generation Modeling Workbench project",
   "repository": {
     "type": "git",
-    "url": "git://github.com/rklancer/Dynamics2D.git#dist"
+    "url": "git://github.com/rklancer/dynamics-2d.git#package"
   }
 }
