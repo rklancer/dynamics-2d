@@ -14,6 +14,9 @@ clean:
 	rm -rf lib
 	rm -rf browser
 
+bin:
+	mkdir -p bin
+
 lib: $(JS_FILES) $(COFFEE_FILES)
 	rm -rf lib
 	cp -r src/ lib/
@@ -28,3 +31,10 @@ browser/dynamics-2d.js: lib
 
 hint:
 	$(JSHINT) $(JS_FILES) --config jshint-config.json --show-non-errors
+
+package: bin lib browser
+	rm -rf dist
+	mkdir dist
+	cp -R bin/ dist/bin
+	cp -r lib/ dist/lib
+	cp -r browser/ dist/browser/
